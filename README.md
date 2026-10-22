@@ -8,7 +8,6 @@ Pengembangan dari https://github.com/harshitasingh4863/instruction-level-paralle
 | `common.py` | Scheduler ILP + penggambar dependency graph |
 | `hazards.py` | Deteksi RAW, WAR, WAW |
 | `run_all.py` | Menjalankan ke-12 program |
-| `generate_report.py` | Membuat PDF laporan |
 
 ## Menjalankan
 ```bash
