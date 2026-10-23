@@ -14,5 +14,4 @@ Pengembangan dari https://github.com/harshitasingh4863/instruction-level-paralle
 pip install -r requirements.txt
 python anggota1/raw.py        # satu program
 python run_all.py             # semua 12 program
-python generate_report.py --members "Nama1 (NIM)" "Nama2 (NIM)" "Nama3 (NIM)" --github https://github.com/USER/REPO
 ```
