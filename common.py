@@ -9,7 +9,8 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.patches import FancyArrowPatch
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle
+from matplotlib.lines import Line2D
 
 
 @dataclass
@@ -72,9 +73,6 @@ def print_dependencies(instructions, edges, label):
 # -------------------------------------------------
 # Dependency graph
 # -------------------------------------------------
-from matplotlib.patches import FancyBboxPatch, Rectangle
-from matplotlib.lines import Line2D
-
 NODE_INDEP = "#c8f0c8"   # hijau  : instruksi independen (tanpa dependensi)
 NODE_DEP = "#ffe9a8"     # kuning : instruksi dependen
 
@@ -90,7 +88,7 @@ def draw_graph(instructions, edges, title, filename):
 
     LABEL_W, COLW, ROWH = 3.2, 1.55, 0.85
     BW, BH = 0.70, 0.50
-    TOP, BOTTOM = 1.25, 0.95
+    TOP, BOTTOM = 1.25, 1.25
     W = LABEL_W + COLW * cols + 0.3
     H = TOP + ROWH * n + BOTTOM
 
@@ -150,8 +148,6 @@ def draw_graph(instructions, edges, title, filename):
     def hits(pts, skip, margin=0.10):
         n_hit = 0
         for j, (px, py) in enumerate(pts):
-            if j < 6 or j > len(pts) - 7:
-                continue
             for i2 in range(n):
                 if i2 in skip:
                     continue
@@ -165,11 +161,36 @@ def draw_graph(instructions, edges, title, filename):
     drawn_pts = []
     seen = {}
     # garis pendek diproses lebih dulu, garis panjang mencari jalur yang tidak menabrak
-    order = sorted(edges, key=lambda e: (level[e[1]] - level[e[0]], e[1] - e[0]))
-    for src, dst, reg, kind in order:
+    order = sorted(range(len(edges)),
+                   key=lambda t: (level[edges[t][1]] - level[edges[t][0]],
+                                  edges[t][1] - edges[t][0]))
+
+    # sebar titik awal/akhir panah agar beberapa panah pada satu kotak tidak menumpuk
+    off_out, off_in, off_in_x = {}, {}, {}
+    for node in range(n):
+        outs = sorted([t for t, e in enumerate(edges) if e[0] == node],
+                      key=lambda t: -edges[t][1])
+        ins_ = sorted([t for t, e in enumerate(edges) if e[1] == node],
+                      key=lambda t: -edges[t][0])
+        for lst, dct in ((outs, off_out), (ins_, off_in)):
+            for pos_i, t in enumerate(lst):
+                dct[t] = (pos_i - (len(lst) - 1) / 2) * 0.26
+        # geser juga ke kiri-kanan: sumber paling jauh masuk di kiri, paling dekat di kanan
+        ins_x = sorted([t for t, e in enumerate(edges) if e[1] == node],
+                       key=lambda t: (level[edges[t][0]], edges[t][0]))
+        for pos_i, t in enumerate(ins_x):
+            off_in_x[t] = (pos_i - (len(ins_x) - 1) / 2) * 0.40
+
+    def inside(px, py, i):
+        return (abs(px - X(level[i])) <= BW / 2 + 0.03
+                and abs(py - Y(i)) <= BH / 2 + 0.03)
+
+    for t in order:
+        src, dst, reg, kind = edges[t]
         k = seen.get((src, dst), 0)
         seen[(src, dst)] = k + 1
-        p0, p2 = (X(level[src]), Y(src)), (X(level[dst]), Y(dst))
+        p0 = (X(level[src]), Y(src) + off_out[t])
+        p2 = (X(level[dst]) + off_in_x[t], Y(dst) + off_in[t])
         pref = 1 if kind == "RAW" else -1
         cands = [0.0]
         for r in (0.18, 0.32, 0.46, 0.62, 0.80):
@@ -195,15 +216,52 @@ def draw_graph(instructions, edges, title, filename):
         taken_labels.append(mid)
         drawn_pts.extend(curve_pts(p0, p2, rad)[8:-8])
         st = EDGE_STYLE[kind]
+
+        # potong kurva tepat di tepi kotak asal dan tujuan
+        pts = curve_pts(p0, p2, rad, m=300)
+        i0 = 0
+        while i0 < len(pts) - 1 and inside(pts[i0][0], pts[i0][1], src):
+            i0 += 1
+        i1 = len(pts) - 1
+        while i1 > i0 and inside(pts[i1][0], pts[i1][1], dst):
+            i1 -= 1
+        seg = pts[i0:i1 + 1]
+        tip = seg[-1]
+        h = len(seg) - 1
+        while h > 0 and ((seg[h][0] - tip[0]) ** 2 + (seg[h][1] - tip[1]) ** 2) ** 0.5 < 0.15:
+            h -= 1
+
+        # badan panah (boleh putus-putus), tanpa kepala
+        ax.plot([q[0] for q in seg[:h + 1]], [q[1] for q in seg[:h + 1]],
+                color=st["color"], linestyle=st["style"], linewidth=2.2,
+                solid_capstyle="butt", dash_capstyle="butt", zorder=3)
+        # kepala panah: selalu solid, jadi tidak tampak ganda
         ax.add_patch(FancyArrowPatch(
-            p0, p2, patchA=box[src], patchB=box[dst],
-            arrowstyle="-|>", mutation_scale=22, color=st["color"],
-            linestyle=st["style"], linewidth=2.2,
-            connectionstyle=f"arc3,rad={rad}", shrinkA=1, shrinkB=1, zorder=3))
+            seg[h], tip, arrowstyle="-|>", mutation_scale=22,
+            color=st["color"], linestyle="-", linewidth=2.2,
+            shrinkA=0, shrinkB=0, zorder=4))
+
         ax.text(mid[0], mid[1], reg, ha="center", va="center", fontsize=11,
                 fontweight="bold", color=st["color"], zorder=7,
                 bbox=dict(fc="white", ec=st["color"], lw=0.8, pad=1.5,
                           boxstyle="round,pad=0.15"))
+
+    # ---- catatan: instruksi yang hasilnya ditimpa sebelum sempat dibaca ----
+    notes = []
+    out_nodes = {e[0] for e in edges}
+    for i, ins in enumerate(instructions):
+        if i in out_nodes:
+            continue
+        for j in range(i + 1, n):
+            if ins.destination in instructions[j].sources:
+                break
+            if instructions[j].destination == ins.destination:
+                notes.append(f"{ins.name} tidak punya panah keluar: {ins.destination} "
+                             f"ditimpa {instructions[j].name} sebelum dibaca instruksi mana pun.")
+                break
+    for q, txt in enumerate(notes):
+        ax.text(0.2, BOTTOM - 0.55 - 0.28 * q, "Catatan: " + txt, ha="left",
+                va="center", fontsize=10, style="italic", color="#444")
 
     # ---- judul + legenda ----
     ax.text(W / 2, H - 0.35, f"{title}  ({cols} cycle)", ha="center", va="center",
