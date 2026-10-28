@@ -80,42 +80,16 @@ NODE_DEP = "#ffe9a8"     # kuning : instruksi dependen
 def draw_graph(instructions, edges, title, filename):
     """
     Tata letak: baris = instruksi, kolom = cycle.
-    Panah berbentuk siku-siku: keluar dari sisi kanan kotak asal, turun lewat
-    jalur (lane) tersendiri di sela kolom, lalu masuk ke sisi kiri kotak tujuan.
-    Karena tiap baris hanya berisi satu kotak, garis tidak pernah menembus kotak
-    lain, dan ujung panah selalu menempel di kotak tujuan.
+    Teks instruksi ada di kolom kiri, kotak hanya berisi nama (I1, I2, ...),
+    panah berhenti tepat di tepi kotak sehingga kepala panah terlihat jelas.
     """
     level = schedule(instructions, edges)
     n, cols = len(instructions), max(level)
-    n_edges = len(edges)
-    dense = n_edges > 30
 
-    # ---- jalur vertikal (lane): satu jalur per panah, jalur dipakai bersama
-    #      hanya oleh panah yang rentang barisnya tidak bertumpuk ----
-    lane_of, nlanes = {}, {}
-    for c in range(1, cols + 1):
-        idx = [t for t, e in enumerate(edges) if level[e[1]] == c]
-        idx.sort(key=lambda t: (edges[t][0], -edges[t][1]))
-        lanes_end = []                     # baris terakhir yang dipakai tiap lane
-        for t in idx:
-            s_row, d_row = edges[t][0], edges[t][1]
-            for li, last in enumerate(lanes_end):
-                if last < s_row:
-                    lanes_end[li] = d_row
-                    lane_of[t] = li
-                    break
-            else:
-                lanes_end.append(d_row)
-                lane_of[t] = len(lanes_end) - 1
-        nlanes[c] = max(len(lanes_end), 1)
-
-    BW, BH = 0.70, (0.80 if dense else 0.66)
-    LANE_SP = 0.16
-    need = max(nlanes.values()) * LANE_SP + 0.5
-    COLW = max(1.9, BW + need)
-    ROWH = 1.25 if dense else 1.0
-    LABEL_W, TOP, BOTTOM = 3.4, 1.35, 1.35
-    W = LABEL_W + COLW * cols + 0.4
+    LABEL_W, COLW, ROWH = 3.2, 1.55, 0.85
+    BW, BH = 0.70, 0.50
+    TOP, BOTTOM = 1.25, 1.25
+    W = LABEL_W + COLW * cols + 0.3
     H = TOP + ROWH * n + BOTTOM
 
     fig = plt.figure(figsize=(W, H))
@@ -136,7 +110,7 @@ def draw_graph(instructions, edges, title, filename):
         if c % 2 == 1:
             ax.add_patch(Rectangle((LABEL_W + COLW * (c - 1), y_bot), COLW,
                                    y_top - y_bot, fc="#f1f3f6", ec="none", zorder=0))
-        ax.text(X(c), H - TOP + 0.5, f"Cycle {c}", ha="center", va="center",
+        ax.text(X(c), H - TOP + 0.45, f"Cycle {c}", ha="center", va="center",
                 fontsize=12, fontweight="bold", color="#333")
 
     # ---- baris: garis tipis + teks instruksi ----
@@ -145,62 +119,132 @@ def draw_graph(instructions, edges, title, filename):
         ax.text(0.2, Y(i), f"{ins.name}:  {ins}", ha="left", va="center",
                 fontsize=12, fontweight="bold", family="monospace", color="#111")
 
-    # ---- titik keluar / masuk panah, disebar di sisi kotak ----
-    span = BH - 0.14
-    off_out, off_in = {}, {}
-    for node in range(n):
-        outs = sorted([t for t, e in enumerate(edges) if e[0] == node],
-                      key=lambda t: (edges[t][1], edges[t][3]))
-        ins_ = sorted([t for t, e in enumerate(edges) if e[1] == node],
-                      key=lambda t: (edges[t][0], edges[t][3]))
-        for lst, dct in ((outs, off_out), (ins_, off_in)):
-            k = len(lst)
-            for pos_i, t in enumerate(lst):
-                dct[t] = ((k - 1) / 2 - pos_i) * (span / (k - 1)) if k > 1 else 0.0
-
     # ---- node ----
     has_pred = {e[1] for e in edges}
+    box = {}
     for i, ins in enumerate(instructions):
         x, y = X(level[i]), Y(i)
-        ax.add_patch(FancyBboxPatch(
-            (x - BW / 2, y - BH / 2), BW, BH,
-            boxstyle="round,pad=0.02,rounding_size=0.12",
-            fc=NODE_DEP if i in has_pred else NODE_INDEP,
-            ec="#222", lw=1.8, zorder=5))
+        p = FancyBboxPatch((x - BW / 2, y - BH / 2), BW, BH,
+                           boxstyle="round,pad=0.02,rounding_size=0.12",
+                           fc=NODE_DEP if i in has_pred else NODE_INDEP,
+                           ec="#222", lw=1.8, zorder=5)
+        ax.add_patch(p)
         ax.text(x, y, ins.name, ha="center", va="center", fontsize=13,
                 fontweight="bold", zorder=6)
+        box[i] = p
 
-    # ---- panah siku-siku ----
-    lw = 1.7 if dense else 2.2
-    fs_label = 8 if dense else 10
-    HEAD = 0.17
-    labels = []
-    for t, (src, dst, reg, kind) in enumerate(edges):
+    # ---- panah dependensi (lengkungan dipilih otomatis agar tidak menabrak kotak) ----
+    def curve_pts(p0, p2, rad, m=40):
+        (x1, y1), (x2, y2) = p0, p2
+        cx = (x1 + x2) / 2 + rad * (y2 - y1)
+        cy = (y1 + y2) / 2 - rad * (x2 - x1)
+        pts = []
+        for j in range(m + 1):
+            t = j / m
+            pts.append(((1 - t) ** 2 * x1 + 2 * (1 - t) * t * cx + t * t * x2,
+                        (1 - t) ** 2 * y1 + 2 * (1 - t) * t * cy + t * t * y2))
+        return pts
+
+    def hits(pts, skip, margin=0.10):
+        n_hit = 0
+        for j, (px, py) in enumerate(pts):
+            for i2 in range(n):
+                if i2 in skip:
+                    continue
+                bx, by = X(level[i2]), Y(i2)
+                if abs(px - bx) < BW / 2 + margin and abs(py - by) < BH / 2 + margin:
+                    n_hit += 1
+                    break
+        return n_hit
+
+    taken_labels = []
+    drawn_pts = []
+    seen = {}
+    # garis pendek diproses lebih dulu, garis panjang mencari jalur yang tidak menabrak
+    order = sorted(range(len(edges)),
+                   key=lambda t: (level[edges[t][1]] - level[edges[t][0]],
+                                  edges[t][1] - edges[t][0]))
+
+    # sebar titik awal/akhir panah agar beberapa panah pada satu kotak tidak menumpuk
+    off_out, off_in, off_in_x = {}, {}, {}
+    for node in range(n):
+        outs = sorted([t for t, e in enumerate(edges) if e[0] == node],
+                      key=lambda t: -edges[t][1])
+        ins_ = sorted([t for t, e in enumerate(edges) if e[1] == node],
+                      key=lambda t: -edges[t][0])
+        for lst, dct in ((outs, off_out), (ins_, off_in)):
+            for pos_i, t in enumerate(lst):
+                dct[t] = (pos_i - (len(lst) - 1) / 2) * 0.26
+        # geser juga ke kiri-kanan: sumber paling jauh masuk di kiri, paling dekat di kanan
+        ins_x = sorted([t for t, e in enumerate(edges) if e[1] == node],
+                       key=lambda t: (level[edges[t][0]], edges[t][0]))
+        for pos_i, t in enumerate(ins_x):
+            off_in_x[t] = (pos_i - (len(ins_x) - 1) / 2) * 0.40
+
+    def inside(px, py, i):
+        return (abs(px - X(level[i])) <= BW / 2 + 0.03
+                and abs(py - Y(i)) <= BH / 2 + 0.03)
+
+    for t in order:
+        src, dst, reg, kind = edges[t]
+        k = seen.get((src, dst), 0)
+        seen[(src, dst)] = k + 1
+        p0 = (X(level[src]), Y(src) + off_out[t])
+        p2 = (X(level[dst]) + off_in_x[t], Y(dst) + off_in[t])
+        pref = 1 if kind == "RAW" else -1
+        cands = [0.0]
+        for r in (0.18, 0.32, 0.46, 0.62, 0.80):
+            cands += [pref * r, -pref * r]
+        best = None
+        for rad in cands:
+            pts = curve_pts(p0, p2, rad)
+            mid = pts[len(pts) // 2]
+            lab = sum(1 for (lx, ly) in taken_labels
+                      if abs(lx - mid[0]) < 0.45 and abs(ly - mid[1]) < 0.28)
+            lab += sum(1 for i2 in range(n) if i2 not in (src, dst)
+                       and abs(mid[0] - X(level[i2])) < BW / 2 + 0.25
+                       and abs(mid[1] - Y(i2)) < BH / 2 + 0.2)
+            mid_pts = pts[8:-8]
+            close = sum(1 for (px, py) in mid_pts
+                        if any(abs(px - qx) < 0.16 and abs(py - qy) < 0.16
+                               for (qx, qy) in drawn_pts))
+            score = hits(pts, {src, dst}) * 100 + lab * 30 + close * 6 + abs(rad) * 5 \
+                + (0 if rad * pref >= 0 else 2) + (40 * k if abs(rad) < 0.1 * (k + 1) else 0)
+            if best is None or score < best[0]:
+                best = (score, rad, mid)
+        _, rad, mid = best
+        taken_labels.append(mid)
+        drawn_pts.extend(curve_pts(p0, p2, rad)[8:-8])
         st = EDGE_STYLE[kind]
-        c_d = level[dst]
-        x0 = X(level[src]) + BW / 2 + 0.03
-        y0 = Y(src) + off_out[t]
-        x3 = X(c_d) - BW / 2 - 0.03
-        y3 = Y(dst) + off_in[t]
-        xl = X(c_d) - BW / 2 - 0.30 - lane_of[t] * LANE_SP     # posisi lane
-        xl = min(xl, x3 - HEAD - 0.04)
-        xl = max(xl, x0 + 0.08)
-        ax.plot([x0, xl, xl, x3 - HEAD], [y0, y0, y3, y3], color=st["color"],
-                linestyle=st["style"], linewidth=lw, solid_capstyle="butt",
-                dash_capstyle="butt", solid_joinstyle="round", zorder=3)
-        ax.add_patch(FancyArrowPatch(
-            (x3 - HEAD, y3), (x3, y3), arrowstyle="-|>",
-            mutation_scale=16 if dense else 20, color=st["color"],
-            linestyle="-", linewidth=lw, shrinkA=0, shrinkB=0, zorder=4))
-        # label di jalur vertikal, posisinya diacak agar tidak bertumpuk
-        f = 0.35 + 0.30 * ((lane_of[t] * 3 + t) % 5) / 4
-        labels.append((xl, y0 + (y3 - y0) * f, reg, st["color"]))
 
-    for lx, ly, reg, col in labels:
-        ax.text(lx, ly, reg, ha="center", va="center", fontsize=fs_label,
-                fontweight="bold", color=col, zorder=7,
-                bbox=dict(fc="white", ec=col, lw=0.8, pad=1.0,
-                          boxstyle="round,pad=0.10"))
+        # potong kurva tepat di tepi kotak asal dan tujuan
+        pts = curve_pts(p0, p2, rad, m=300)
+        i0 = 0
+        while i0 < len(pts) - 1 and inside(pts[i0][0], pts[i0][1], src):
+            i0 += 1
+        i1 = len(pts) - 1
+        while i1 > i0 and inside(pts[i1][0], pts[i1][1], dst):
+            i1 -= 1
+        seg = pts[i0:i1 + 1]
+        tip = seg[-1]
+        h = len(seg) - 1
+        while h > 0 and ((seg[h][0] - tip[0]) ** 2 + (seg[h][1] - tip[1]) ** 2) ** 0.5 < 0.15:
+            h -= 1
+
+        # badan panah (boleh putus-putus), tanpa kepala
+        ax.plot([q[0] for q in seg[:h + 1]], [q[1] for q in seg[:h + 1]],
+                color=st["color"], linestyle=st["style"], linewidth=2.2,
+                solid_capstyle="butt", dash_capstyle="butt", zorder=3)
+        # kepala panah: selalu solid, jadi tidak tampak ganda
+        ax.add_patch(FancyArrowPatch(
+            seg[h], tip, arrowstyle="-|>", mutation_scale=22,
+            color=st["color"], linestyle="-", linewidth=2.2,
+            shrinkA=0, shrinkB=0, zorder=4))
+
+        ax.text(mid[0], mid[1], reg, ha="center", va="center", fontsize=11,
+                fontweight="bold", color=st["color"], zorder=7,
+                bbox=dict(fc="white", ec=st["color"], lw=0.8, pad=1.5,
+                          boxstyle="round,pad=0.15"))
 
     # ---- catatan: instruksi yang hasilnya ditimpa sebelum sempat dibaca ----
     notes = []
@@ -220,8 +264,8 @@ def draw_graph(instructions, edges, title, filename):
                 va="center", fontsize=10, style="italic", color="#444")
 
     # ---- judul + legenda ----
-    ax.text(W / 2, H - 0.4, f"{title}  ({cols} cycle, {n_edges} dependensi)",
-            ha="center", va="center", fontsize=15, fontweight="bold")
+    ax.text(W / 2, H - 0.35, f"{title}  ({cols} cycle)", ha="center", va="center",
+            fontsize=15, fontweight="bold")
     handles = [Line2D([0], [0], color=EDGE_STYLE[k]["color"],
                       linestyle=EDGE_STYLE[k]["style"], lw=2.5, label=k)
                for k in sorted({e[3] for e in edges})]
