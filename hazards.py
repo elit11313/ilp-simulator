@@ -20,10 +20,11 @@ def has_waw(earlier, later):
 
 
 def find_raw(ins):
+    """RAW: hanya penulis terakhir sebelum j (dependensi data asli)."""
     edges = set()
     for j, cur in enumerate(ins):
         for reg in cur.sources:
-            for i in range(j - 1, -1, -1):          # penulis terakhir sebelum j
+            for i in range(j - 1, -1, -1):
                 if ins[i].destination == reg:
                     edges.add((i, j, reg, "RAW"))
                     break
@@ -31,21 +32,21 @@ def find_raw(ins):
 
 
 def find_war(ins):
+    """WAR: SEMUA pasangan (i membaca reg, j > i menulis reg yang sama)."""
     edges = set()
     for i, reader in enumerate(ins):
         for reg in reader.sources:
-            for j in range(i + 1, len(ins)):         # penulis pertama setelah i
+            for j in range(i + 1, len(ins)):
                 if ins[j].destination == reg:
                     edges.add((i, j, reg, "WAR"))
-                    break
     return sorted(edges, key=lambda e: (e[1], e[0]))
 
 
 def find_waw(ins):
+    """WAW: SEMUA pasangan (i dan j > i menulis register yang sama)."""
     edges = set()
     for i, first in enumerate(ins):
         for j in range(i + 1, len(ins)):
-            if has_waw(first, ins[j]):               # penulis berikutnya
+            if has_waw(first, ins[j]):
                 edges.add((i, j, first.destination, "WAW"))
-                break
     return sorted(edges, key=lambda e: (e[1], e[0]))
