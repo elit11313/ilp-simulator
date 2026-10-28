@@ -30,15 +30,7 @@ EDGE_STYLE = {
 }
 
 
-# -------------------------------------------------
-# Scheduler ILP
-# -------------------------------------------------
 def schedule(instructions, edges):
-    """
-    Penjadwalan ASAP. edges = list (src_idx, dst_idx, register, tipe).
-    Sebuah instruksi baru boleh jalan setelah semua predecessor-nya
-    selesai (cycle sebelumnya). Return: list level (cycle) tiap instruksi.
-    """
     level = [0] * len(instructions)
     for j in range(len(instructions)):
         preds = [e[0] for e in edges if e[1] == j]
@@ -70,19 +62,11 @@ def print_dependencies(instructions, edges, label):
               f"{instructions[src].name} (register {reg})")
 
 
-# -------------------------------------------------
-# Dependency graph
-# -------------------------------------------------
-NODE_INDEP = "#c8f0c8"   # hijau  : instruksi independen (tanpa dependensi)
-NODE_DEP = "#ffe9a8"     # kuning : instruksi dependen
+NODE_INDEP = "#c8f0c8"
+NODE_DEP = "#ffe9a8"
 
 
 def draw_graph(instructions, edges, title, filename):
-    """
-    Tata letak: baris = instruksi, kolom = cycle.
-    Teks instruksi ada di kolom kiri, kotak hanya berisi nama (I1, I2, ...),
-    panah berhenti tepat di tepi kotak sehingga kepala panah terlihat jelas.
-    """
     level = schedule(instructions, edges)
     n, cols = len(instructions), max(level)
 
@@ -104,7 +88,6 @@ def draw_graph(instructions, edges, title, filename):
     def Y(i):
         return H - TOP - ROWH * (i + 0.5)
 
-    # ---- latar kolom cycle + judul kolom ----
     y_top, y_bot = H - TOP + 0.25, BOTTOM - 0.25
     for c in range(1, cols + 1):
         if c % 2 == 1:
@@ -113,13 +96,11 @@ def draw_graph(instructions, edges, title, filename):
         ax.text(X(c), H - TOP + 0.45, f"Cycle {c}", ha="center", va="center",
                 fontsize=12, fontweight="bold", color="#333")
 
-    # ---- baris: garis tipis + teks instruksi ----
     for i, ins in enumerate(instructions):
         ax.plot([0.1, W - 0.1], [Y(i) - ROWH / 2] * 2, color="#e3e3e3", lw=0.8, zorder=0)
         ax.text(0.2, Y(i), f"{ins.name}:  {ins}", ha="left", va="center",
                 fontsize=12, fontweight="bold", family="monospace", color="#111")
 
-    # ---- node ----
     has_pred = {e[1] for e in edges}
     box = {}
     for i, ins in enumerate(instructions):
@@ -133,7 +114,6 @@ def draw_graph(instructions, edges, title, filename):
                 fontweight="bold", zorder=6)
         box[i] = p
 
-    # ---- panah dependensi (lengkungan dipilih otomatis agar tidak menabrak kotak) ----
     def curve_pts(p0, p2, rad, m=40):
         (x1, y1), (x2, y2) = p0, p2
         cx = (x1 + x2) / 2 + rad * (y2 - y1)
@@ -160,12 +140,10 @@ def draw_graph(instructions, edges, title, filename):
     taken_labels = []
     drawn_pts = []
     seen = {}
-    # garis pendek diproses lebih dulu, garis panjang mencari jalur yang tidak menabrak
     order = sorted(range(len(edges)),
                    key=lambda t: (level[edges[t][1]] - level[edges[t][0]],
                                   edges[t][1] - edges[t][0]))
 
-    # sebar titik awal/akhir panah agar beberapa panah pada satu kotak tidak menumpuk
     off_out, off_in, off_in_x = {}, {}, {}
     for node in range(n):
         outs = sorted([t for t, e in enumerate(edges) if e[0] == node],
@@ -173,13 +151,15 @@ def draw_graph(instructions, edges, title, filename):
         ins_ = sorted([t for t, e in enumerate(edges) if e[1] == node],
                       key=lambda t: -edges[t][0])
         for lst, dct in ((outs, off_out), (ins_, off_in)):
+            # jarak antar titik dibatasi supaya semua titik tetap di dalam kotak
+            step = min(0.26, (BH - 0.14) / max(len(lst) - 1, 1))
             for pos_i, t in enumerate(lst):
-                dct[t] = (pos_i - (len(lst) - 1) / 2) * 0.26
-        # geser juga ke kiri-kanan: sumber paling jauh masuk di kiri, paling dekat di kanan
+                dct[t] = (pos_i - (len(lst) - 1) / 2) * step
         ins_x = sorted([t for t, e in enumerate(edges) if e[1] == node],
                        key=lambda t: (level[edges[t][0]], edges[t][0]))
+        step_x = min(0.40, (BW - 0.16) / max(len(ins_x) - 1, 1))
         for pos_i, t in enumerate(ins_x):
-            off_in_x[t] = (pos_i - (len(ins_x) - 1) / 2) * 0.40
+            off_in_x[t] = (pos_i - (len(ins_x) - 1) / 2) * step_x
 
     def inside(px, py, i):
         return (abs(px - X(level[i])) <= BW / 2 + 0.03
@@ -208,8 +188,11 @@ def draw_graph(instructions, edges, title, filename):
             close = sum(1 for (px, py) in mid_pts
                         if any(abs(px - qx) < 0.16 and abs(py - qy) < 0.16
                                for (qx, qy) in drawn_pts))
+            outside = sum(1 for (px, py) in pts
+                          if px < 0.3 or px > W - 0.3 or py < 0.3 or py > H - 0.3)
             score = hits(pts, {src, dst}) * 100 + lab * 30 + close * 6 + abs(rad) * 5 \
-                + (0 if rad * pref >= 0 else 2) + (40 * k if abs(rad) < 0.1 * (k + 1) else 0)
+                + (0 if rad * pref >= 0 else 2) + (40 * k if abs(rad) < 0.1 * (k + 1) else 0) \
+                + outside * 200
             if best is None or score < best[0]:
                 best = (score, rad, mid)
         _, rad, mid = best
@@ -217,8 +200,7 @@ def draw_graph(instructions, edges, title, filename):
         drawn_pts.extend(curve_pts(p0, p2, rad)[8:-8])
         st = EDGE_STYLE[kind]
 
-        # potong kurva tepat di tepi kotak asal dan tujuan
-        pts = curve_pts(p0, p2, rad, m=300)
+        pts = curve_pts(p0, p2, rad, m=1500)
         i0 = 0
         while i0 < len(pts) - 1 and inside(pts[i0][0], pts[i0][1], src):
             i0 += 1
@@ -231,11 +213,9 @@ def draw_graph(instructions, edges, title, filename):
         while h > 0 and ((seg[h][0] - tip[0]) ** 2 + (seg[h][1] - tip[1]) ** 2) ** 0.5 < 0.15:
             h -= 1
 
-        # badan panah (boleh putus-putus), tanpa kepala
         ax.plot([q[0] for q in seg[:h + 1]], [q[1] for q in seg[:h + 1]],
                 color=st["color"], linestyle=st["style"], linewidth=2.2,
                 solid_capstyle="butt", dash_capstyle="butt", zorder=3)
-        # kepala panah: selalu solid, jadi tidak tampak ganda
         ax.add_patch(FancyArrowPatch(
             seg[h], tip, arrowstyle="-|>", mutation_scale=22,
             color=st["color"], linestyle="-", linewidth=2.2,
@@ -246,7 +226,6 @@ def draw_graph(instructions, edges, title, filename):
                 bbox=dict(fc="white", ec=st["color"], lw=0.8, pad=1.5,
                           boxstyle="round,pad=0.15"))
 
-    # ---- catatan: instruksi yang hasilnya ditimpa sebelum sempat dibaca ----
     notes = []
     out_nodes = {e[0] for e in edges}
     for i, ins in enumerate(instructions):
@@ -263,7 +242,6 @@ def draw_graph(instructions, edges, title, filename):
         ax.text(0.2, BOTTOM - 0.55 - 0.28 * q, "Catatan: " + txt, ha="left",
                 va="center", fontsize=10, style="italic", color="#444")
 
-    # ---- judul + legenda ----
     ax.text(W / 2, H - 0.35, f"{title}  ({cols} cycle)", ha="center", va="center",
             fontsize=15, fontweight="bold")
     handles = [Line2D([0], [0], color=EDGE_STYLE[k]["color"],
