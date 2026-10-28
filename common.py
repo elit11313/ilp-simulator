@@ -73,7 +73,8 @@ def draw_graph(instructions, edges, title, filename):
     LABEL_W, COLW, ROWH = 3.2, 1.55, 0.85
     BW, BH = 0.70, 0.50
     TOP, BOTTOM = 1.25, 1.25
-    W = LABEL_W + COLW * cols + 0.3
+    W0 = LABEL_W + COLW * cols + 0.3        # lebar tampilan semula (judul/legenda dipusatkan di sini)
+    W = W0 + 1.2                            # ruang kosong di kanan agar busur bisa melengkung
     H = TOP + ROWH * n + BOTTOM
 
     fig = plt.figure(figsize=(W, H))
@@ -97,7 +98,7 @@ def draw_graph(instructions, edges, title, filename):
                 fontsize=12, fontweight="bold", color="#333")
 
     for i, ins in enumerate(instructions):
-        ax.plot([0.1, W - 0.1], [Y(i) - ROWH / 2] * 2, color="#e3e3e3", lw=0.8, zorder=0)
+        ax.plot([0.1, W0 - 0.1], [Y(i) - ROWH / 2] * 2, color="#e3e3e3", lw=0.8, zorder=0)
         ax.text(0.2, Y(i), f"{ins.name}:  {ins}", ha="left", va="center",
                 fontsize=12, fontweight="bold", family="monospace", color="#111")
 
@@ -173,7 +174,7 @@ def draw_graph(instructions, edges, title, filename):
         p2 = (X(level[dst]) + off_in_x[t], Y(dst) + off_in[t])
         pref = 1 if kind == "RAW" else -1
         cands = [0.0]
-        for r in (0.18, 0.32, 0.46, 0.62, 0.80):
+        for r in (0.12, 0.18, 0.25, 0.32, 0.39, 0.46, 0.54, 0.62, 0.71, 0.80, 0.95, 1.20, 1.50):
             cands += [pref * r, -pref * r]
         best = None
         for rad in cands:
@@ -188,9 +189,14 @@ def draw_graph(instructions, edges, title, filename):
             close = sum(1 for (px, py) in mid_pts
                         if any(abs(px - qx) < 0.16 and abs(py - qy) < 0.16
                                for (qx, qy) in drawn_pts))
+            # lengkungan harus tetap di area gambar: tidak menimpa judul, tulisan
+            # "Cycle N", legenda, maupun teks instruksi di kolom kiri
             outside = sum(1 for (px, py) in pts
-                          if px < 0.3 or px > W - 0.3 or py < 0.3 or py > H - 0.3)
-            score = hits(pts, {src, dst}) * 100 + lab * 30 + close * 6 + abs(rad) * 5 \
+                          if px < LABEL_W - 0.45 or px > W - 0.3
+                          or py < y_bot + 0.05 or py > y_top - 0.05)
+            near = hits(pts, {src, dst}, margin=0.24)       # jangan terlalu dekat kotak lain
+            score = hits(pts, {src, dst}) * 100 + near * 25 + lab * 30 + close * 6 \
+                + abs(rad) * 5 \
                 + (0 if rad * pref >= 0 else 2) + (40 * k if abs(rad) < 0.1 * (k + 1) else 0) \
                 + outside * 200
             if best is None or score < best[0]:
@@ -228,8 +234,9 @@ def draw_graph(instructions, edges, title, filename):
 
     notes = []
     out_nodes = {e[0] for e in edges}
+    only_raw = {e[3] for e in edges} == {"RAW"}   # catatan ini hanya relevan untuk RAW
     for i, ins in enumerate(instructions):
-        if i in out_nodes:
+        if i in out_nodes or not only_raw:
             continue
         for j in range(i + 1, n):
             if ins.destination in instructions[j].sources:
@@ -242,7 +249,7 @@ def draw_graph(instructions, edges, title, filename):
         ax.text(0.2, BOTTOM - 0.55 - 0.28 * q, "Catatan: " + txt, ha="left",
                 va="center", fontsize=10, style="italic", color="#444")
 
-    ax.text(W / 2, H - 0.35, f"{title}  ({cols} cycle)", ha="center", va="center",
+    ax.text(W0 / 2, H - 0.35, f"{title}  ({cols} cycle)", ha="center", va="center",
             fontsize=15, fontweight="bold")
     handles = [Line2D([0], [0], color=EDGE_STYLE[k]["color"],
                       linestyle=EDGE_STYLE[k]["style"], lw=2.5, label=k)
@@ -250,7 +257,7 @@ def draw_graph(instructions, edges, title, filename):
     handles += [Rectangle((0, 0), 1, 1, fc=NODE_INDEP, ec="#222", label="Independen"),
                 Rectangle((0, 0), 1, 1, fc=NODE_DEP, ec="#222", label="Dependen")]
     ax.legend(handles=handles, loc="lower center", ncol=len(handles), fontsize=11,
-              frameon=False, bbox_to_anchor=(0.5, 0.0))
+              frameon=False, bbox_to_anchor=(W0 / 2 / W, 0.0))
 
     fig.savefig(filename, dpi=150, bbox_inches="tight", pad_inches=0.25,
                 facecolor="white")
