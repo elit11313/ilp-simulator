@@ -17,5 +17,5 @@ INSTRUCTIONS = [
     Instruction("I9", "R3", ['R1', 'R5']),
     Instruction("I10", "R26", ['R27', 'R28']),
     Instruction("I11", "R1", ['R3', 'R2']),
-    Instruction("I12", "R2", ['R6', 'R1']),
+    Instruction("I12", "R2", ['R6', 'R3']),
 ]
