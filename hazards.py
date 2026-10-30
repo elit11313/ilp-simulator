@@ -1,52 +1,49 @@
 """
-hazards.py - deteksi RAW, WAR, WAW (dipakai semua program anggota).
-Edge berupa tuple (idx_dari, idx_ke, register, tipe).
+hazards.py
+Deteksi tiga jenis data hazard antar instruksi.
+a = instruksi lebih awal, b = instruksi lebih akhir (urutan program).
 """
 
+from collections import namedtuple
 
-def has_raw(earlier, later):
-    """RAW: `later` membaca register yang ditulis `earlier`."""
-    return earlier.destination in later.sources
-
-
-def has_war(earlier, later):
-    """WAR: `later` menulis register yang dibaca `earlier`."""
-    return later.destination in earlier.sources
+Dependency = namedtuple("Dependency", "first second kind register")
 
 
-def has_waw(earlier, later):
-    """WAW: keduanya menulis register yang sama."""
-    return earlier.destination == later.destination
+def find_raw(instructions):
+    """RAW: b MEMBACA register yang DITULIS a (true dependence)."""
+    deps = []
+    for i, a in enumerate(instructions):
+        for b in instructions[i + 1:]:
+            if a.destination in b.sources:
+                deps.append(Dependency(a.name, b.name, "RAW", a.destination))
+    return deps
 
 
-def find_raw(ins):
-    """RAW: hanya penulis terakhir sebelum j (dependensi data asli)."""
-    edges = set()
-    for j, cur in enumerate(ins):
-        for reg in cur.sources:
-            for i in range(j - 1, -1, -1):
-                if ins[i].destination == reg:
-                    edges.add((i, j, reg, "RAW"))
-                    break
-    return sorted(edges, key=lambda e: (e[1], e[0]))
+def find_war(instructions):
+    """WAR: b MENULIS register yang DIBACA a (anti-dependence)."""
+    deps = []
+    for i, a in enumerate(instructions):
+        for b in instructions[i + 1:]:
+            if b.destination in a.sources:
+                deps.append(Dependency(a.name, b.name, "WAR", b.destination))
+    return deps
 
 
-def find_war(ins):
-    """WAR: SEMUA pasangan (i membaca reg, j > i menulis reg yang sama)."""
-    edges = set()
-    for i, reader in enumerate(ins):
-        for reg in reader.sources:
-            for j in range(i + 1, len(ins)):
-                if ins[j].destination == reg:
-                    edges.add((i, j, reg, "WAR"))
-    return sorted(edges, key=lambda e: (e[1], e[0]))
+def find_waw(instructions):
+    """WAW: a dan b sama-sama MENULIS register yang sama (output dependence)."""
+    deps = []
+    for i, a in enumerate(instructions):
+        for b in instructions[i + 1:]:
+            if a.destination == b.destination:
+                deps.append(Dependency(a.name, b.name, "WAW", a.destination))
+    return deps
 
 
-def find_waw(ins):
-    """WAW: SEMUA pasangan (i dan j > i menulis register yang sama)."""
-    edges = set()
-    for i, first in enumerate(ins):
-        for j in range(i + 1, len(ins)):
-            if has_waw(first, ins[j]):
-                edges.add((i, j, first.destination, "WAW"))
-    return sorted(edges, key=lambda e: (e[1], e[0]))
+FINDERS = {"RAW": find_raw, "WAR": find_war, "WAW": find_waw}
+
+
+def find_dependencies(instructions, kinds=("RAW", "WAR", "WAW")):
+    deps = []
+    for kind in kinds:
+        deps.extend(FINDERS[kind](instructions))
+    return deps
