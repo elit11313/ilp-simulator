@@ -1,8 +1,4 @@
-"""
-hazards.py
-Deteksi tiga jenis data hazard antar instruksi.
-a = instruksi lebih awal, b = instruksi lebih akhir (urutan program).
-"""
+"""Deteksi tiga jenis data hazard. a = instruksi lebih awal, b = lebih akhir."""
 
 from collections import namedtuple
 
