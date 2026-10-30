@@ -1,30 +1,56 @@
-"""run_all.py - menjalankan ke-12 program (3 anggota x 4 program)."""
-import os
-import subprocess
+"""
+run_all.py
+Menjalankan semua skrip anggota, mencatat status (OK/GAGAL) dan waktu tiap skrip,
+lalu menampilkan tabel ringkasan perbandingan RAW vs WAR vs WAW.
+"""
+
+import importlib
 import sys
+import time
+import traceback
 
-base = os.path.dirname(os.path.abspath(__file__))
-berhasil, lewat, gagal = [], [], []
+SCRIPTS = ["anggota1_raw", "anggota2_war", "anggota3_waw"]
 
-for k in (1, 2, 3):
-    for prog in ("raw", "war", "waw", "semua"):
-        nama = f"anggota{k}/{prog}.py"
-        path = os.path.join(base, f"anggota{k}", f"{prog}.py")
-        print(f"\n######## {nama} ########")
-        if not os.path.isfile(path):
-            print(f"[LEWAT] File tidak ditemukan: {nama}")
-            lewat.append(nama)
-            continue
-        hasil = subprocess.run([sys.executable, path], cwd=base)
-        if hasil.returncode == 0:
-            berhasil.append(nama)
-        else:
-            print(f"[GAGAL] {nama} error, lihat pesan di atas")
-            gagal.append(nama)
 
-print("\n" + "=" * 56)
-print("RINGKASAN")
-print("=" * 56)
-print(f"Berhasil : {len(berhasil)} dari 12")
-print(f"Tidak ada: {lewat if lewat else '-'}")
-print(f"Error    : {gagal if gagal else '-'}")
+def main():
+    results, status = [], []
+
+    for name in SCRIPTS:
+        start = time.perf_counter()
+        try:
+            module = importlib.import_module(name)
+            results.append(module.main())
+            status.append((name, "OK", time.perf_counter() - start))
+        except Exception:
+            traceback.print_exc()
+            status.append((name, "GAGAL", time.perf_counter() - start))
+
+    print("\n\n" + "#" * 78)
+    print("STATUS SKRIP")
+    print("#" * 78)
+    for name, st, sec in status:
+        print(f"  {name + '.py':<20} {st:<6} ({sec:.2f} detik)")
+
+    if results:
+        print("\n" + "#" * 78)
+        print("RINGKASAN PERBANDINGAN")
+        print("#" * 78)
+        header = (f"{'Hazard':<7}{'Dep':>5}{'Crit':>6}{'Seq':>5}{'Ideal':>7}"
+                  f"{'Hazard':>8}{'Rename':>8}{'Speedup':>9}{'Eff%':>8}")
+        print(header)
+        print("-" * len(header))
+        for r in results:
+            print(f"{r['kind']:<7}{r['deps']:>5}{r['critical']:>6}{r['n']:>5}"
+                  f"{r['ideal']:>7}{r['hazard']:>8}{r['renamed']:>8}"
+                  f"{r['speedup']:>8.2f}x{r['efficiency']:>8.2f}")
+
+        print("\nKesimpulan singkat:")
+        print("- RAW (true dependence): tidak berubah setelah renaming.")
+        print("- WAR/WAW (name dependence): turun ke cycle ideal setelah renaming.")
+
+    if any(s[1] == "GAGAL" for s in status):
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
