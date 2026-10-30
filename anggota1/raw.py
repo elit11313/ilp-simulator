@@ -1,28 +1,15 @@
-"""
-Anggota 1 - RAW (Read After Write)
-"""
+from ilp_core import Instruction, run_full_analysis
 
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from common import draw_graph, print_dependencies, print_schedule
-from instruksi import INSTRUCTIONS
-from hazards import find_raw
-
-
-def main():
-    os.makedirs(os.path.join(os.path.dirname(os.path.abspath(__file__)), "graphs"), exist_ok=True)
-    print("Instruction Set:")
-    for ins in INSTRUCTIONS:
-        print(f"{ins.name}: {ins}")
-    edges = find_raw(INSTRUCTIONS)
-    print_dependencies(INSTRUCTIONS, edges, "RAW (Read After Write)")
-    out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "graphs", "raw.png")
-    level = draw_graph(INSTRUCTIONS, edges, "Anggota 1 - Dependency Graph RAW", out)
-    print_schedule(INSTRUCTIONS, level, "ILP EXECUTION - hanya RAW")
-    print("\nGraph disimpan:", out)
-
+instructions = [
+    Instruction("I1", "R1",  ["R2", "R3"],   "+"),
+    Instruction("I2", "R4",  ["R1", "R5"],   "*"),   # baca R1 dari I1
+    Instruction("I3", "R6",  ["R7", "R8"],   "-"),
+    Instruction("I4", "R9",  ["R4", "R6"],   "+"),   # baca R4 (I2), R6 (I3)
+    Instruction("I5", "R10", ["R11", "R12"], "+"),
+    Instruction("I6", "R13", ["R9", "R10"],  "-"),   # baca R9 (I4), R10 (I5)
+    Instruction("I7", "R14", ["R15", "R16"], "+"),
+    Instruction("I8", "R17", ["R13", "R14"], "*"),   # baca R13 (I6), R14 (I7)
+]
 
 if __name__ == "__main__":
-    main()
+    run_full_analysis("RAW", instructions, "raw_graph.dot")
