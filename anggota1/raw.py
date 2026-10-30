@@ -2,7 +2,7 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))   # agar common.py di folder utama terbaca
+sys.path.insert(0, os.path.dirname(HERE))   # supaya common.py terbaca
 
 from common import Instruction, run_analysis
 
