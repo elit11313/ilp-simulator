@@ -1,44 +1,54 @@
 """
 run_all.py
-Menjalankan skrip tiap anggota (di folder anggota1/2/3), mencatat status
-(OK/GAGAL) dan waktu, lalu menampilkan tabel ringkasan RAW vs WAR vs WAW.
+Menjalankan skrip tiap anggota (anggota1/, anggota2/, anggota3/), mencatat
+status OK/GAGAL beserta waktunya, lalu menampilkan tabel ringkasan.
 """
 
-import importlib
+import importlib.util
 import os
 import sys
 import time
 import traceback
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, ROOT)   # agar common.py dan hazards.py terbaca
 
-# Daftarkan folder utama dan folder tiap anggota agar modul bisa di-import
-for folder in ("", "anggota1", "anggota2", "anggota3"):
-    path = os.path.join(ROOT, folder)
-    if path not in sys.path:
-        sys.path.insert(0, path)
+SCRIPTS = [
+    ("anggota1", "anggota1_raw.py"),
+    ("anggota2", "anggota2_war.py"),
+    ("anggota3", "anggota3_waw.py"),
+]
 
-SCRIPTS = ["anggota1_raw", "anggota2_war", "anggota3_waw"]
+
+def load_module(path):
+    name = os.path.splitext(os.path.basename(path))[0]
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def main():
     results, status = [], []
 
-    for name in SCRIPTS:
+    for folder, filename in SCRIPTS:
+        path = os.path.join(ROOT, folder, filename)
+        label = f"{folder}/{filename}"
         start = time.perf_counter()
         try:
-            module = importlib.import_module(name)
-            results.append(module.main())
-            status.append((name, "OK", time.perf_counter() - start))
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"File tidak ditemukan: {path}")
+            results.append(load_module(path).main())
+            status.append((label, "OK", time.perf_counter() - start))
         except Exception:
             traceback.print_exc()
-            status.append((name, "GAGAL", time.perf_counter() - start))
+            status.append((label, "GAGAL", time.perf_counter() - start))
 
     print("\n\n" + "#" * 78)
     print("STATUS SKRIP")
     print("#" * 78)
-    for name, st, sec in status:
-        print(f"  {name + '.py':<20} {st:<6} ({sec:.2f} detik)")
+    for label, st, sec in status:
+        print(f"  {label:<30} {st:<6} ({sec:.2f} detik)")
 
     if results:
         print("\n" + "#" * 78)
