@@ -1,6 +1,8 @@
-from ilp_core import Instruction, run_full_analysis
+from common import Instruction, run_analysis
 
-instructions = [
+KIND = "RAW"
+
+INSTRUCTIONS = [
     Instruction("I1", "R1",  ["R2", "R3"],   "+"),
     Instruction("I2", "R4",  ["R1", "R5"],   "*"),   # baca R1 dari I1
     Instruction("I3", "R6",  ["R7", "R8"],   "-"),
@@ -11,5 +13,10 @@ instructions = [
     Instruction("I8", "R17", ["R13", "R14"], "*"),   # baca R13 (I6), R14 (I7)
 ]
 
+
+def main():
+    return run_analysis(KIND, INSTRUCTIONS)
+
+
 if __name__ == "__main__":
-    run_full_analysis("RAW", instructions, "raw_graph.dot")
+    main()
