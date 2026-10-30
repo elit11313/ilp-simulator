@@ -1,16 +1,19 @@
 """
 common.py
-Bagian bersama: definisi instruksi, scheduler ILP, dan penggambar dependency graph.
+Inti simulator ILP: model instruksi, penjadwalan per cycle, register renaming,
+gambar dependency graph, dan analisis lengkap satu jenis hazard.
+Dikembangkan dari simulator ILP Pak Mulya Agung (RAW saja -> RAW/WAR/WAW).
 """
 
+import os
+import re
 from dataclasses import dataclass
 
-import matplotlib
+from hazards import find_dependencies
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle
-from matplotlib.lines import Line2D
+ISSUE_WIDTH = 4          # maks. instruksi per cycle (seperti contoh ILP slide 7)
+KINDS = ("RAW", "WAR", "WAW")
+COLORS = {"RAW": "red", "WAR": "blue", "WAW": "green"}
 
 
 @dataclass
@@ -18,248 +21,192 @@ class Instruction:
     name: str
     destination: str
     sources: list
+    op: str = "+"
 
-    def __str__(self):
-        return f"{self.destination} = {' + '.join(self.sources)}"
-
-
-EDGE_STYLE = {
-    "RAW": {"color": "#d62728", "style": "-"},
-    "WAR": {"color": "#1f77b4", "style": "--"},
-    "WAW": {"color": "#2ca02c", "style": ":"},
-}
+    def text(self):
+        return f"{self.destination} = {f' {self.op} '.join(self.sources)}"
 
 
-def schedule(instructions, edges):
-    level = [0] * len(instructions)
-    for j in range(len(instructions)):
-        preds = [e[0] for e in edges if e[1] == j]
-        level[j] = 1 + max((level[i] for i in preds), default=0)
-    return level
+# -------------------------------------------------
+# Penjadwalan ILP
+# Instruksi boleh jalan jika semua instruksi yang ia
+# tunggu sudah selesai di cycle SEBELUMNYA.
+# -------------------------------------------------
+def schedule(instructions, deps, width=ISSUE_WIDTH):
+    preds = {ins.name: set() for ins in instructions}
+    for d in deps:
+        preds[d.second].add(d.first)
+
+    done, remaining, cycles = set(), list(instructions), []
+    while remaining:
+        ready = [i for i in remaining if preds[i.name] <= done][:width]
+        cycles.append(ready)
+        done.update(i.name for i in ready)
+        remaining = [i for i in remaining if i.name not in done]
+    return cycles
 
 
-def print_schedule(instructions, level, title):
-    print("\n" + "=" * 56)
+def print_schedule(title, cycles):
+    print("\n" + "=" * 58)
     print(title)
-    print("=" * 56)
-    for c in range(1, max(level) + 1):
-        group = [ins for ins, lv in zip(instructions, level) if lv == c]
-        print(f"Cycle {c}:")
-        for ins in group:
-            print(f"  -> {ins.name}: {ins}")
-    print(f"Total cycles: {max(level)}")
-    return max(level)
+    print("=" * 58)
+    for n, group in enumerate(cycles, 1):
+        print(f"Cycle {n}: " + ", ".join(i.name for i in group))
+        for i in group:
+            print(f"   -> {i.name}: {i.text()}")
+    print(f"Total cycles: {len(cycles)}")
+    return len(cycles)
 
 
-def print_dependencies(instructions, edges, label):
-    print("\n" + "=" * 56)
-    print(f"DEPENDENCY ANALYSIS - {label}")
-    print("=" * 56)
-    if not edges:
-        print("Tidak ada dependency.")
-    for src, dst, reg, kind in edges:
-        print(f"{kind}: {instructions[dst].name} bergantung pada "
-              f"{instructions[src].name} (register {reg})")
+# -------------------------------------------------
+# Register renaming (slide 6: F0 -> F8, F4 -> F9)
+# -------------------------------------------------
+def rename(instructions):
+    numbers = [int(m.group(1))
+               for ins in instructions
+               for r in [ins.destination] + list(ins.sources)
+               for m in [re.fullmatch(r"R(\d+)", r)] if m]
+    nxt = max(numbers) + 1
+
+    table, out = {}, []
+    for ins in instructions:
+        srcs = [table.get(s, s) for s in ins.sources]
+        new = f"R{nxt}"
+        nxt += 1
+        table[ins.destination] = new
+        out.append(Instruction(ins.name, new, srcs, ins.op))
+    return out
 
 
-NODE_INDEP = "#c8f0c8"
-NODE_DEP = "#ffe9a8"
+# -------------------------------------------------
+# Dependency graph (PNG lewat matplotlib + file DOT)
+# -------------------------------------------------
+def draw_graph(instructions, deps, filename, title):
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("matplotlib belum terpasang: jalankan 'pip install -r requirements.txt'")
+        return
 
+    levels = schedule(instructions, deps, width=len(instructions))
+    pos = {}
+    for y, group in enumerate(levels):
+        for k, ins in enumerate(group):
+            pos[ins.name] = ((k - (len(group) - 1) / 2) * 2.8, -y * 2.2)
 
-def draw_graph(instructions, edges, title, filename):
-    level = schedule(instructions, edges)
-    n, cols = len(instructions), max(level)
+    xs = [p[0] for p in pos.values()]
+    fig_w = (max(xs) - min(xs) + 8) * 0.62
+    fig_h = (len(levels) * 2.2 + 1.5) * 0.62
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
-    LABEL_W, COLW, ROWH = 3.2, 1.55, 0.85
-    BW, BH = 0.70, 0.50
-    TOP, BOTTOM = 1.25, 1.25
-    W0 = LABEL_W + COLW * cols + 0.3        # lebar tampilan semula (judul/legenda dipusatkan di sini)
-    W = W0 + 1.2                            # ruang kosong di kanan agar busur bisa melengkung
-    H = TOP + ROWH * n + BOTTOM
+    for ins in instructions:
+        x, y = pos[ins.name]
+        ax.text(x, y, f"{ins.name}\n{ins.text()}", ha="center", va="center",
+                fontsize=9, zorder=3,
+                bbox=dict(boxstyle="round,pad=0.4", fc="#f5f5f5", ec="black"))
 
-    fig = plt.figure(figsize=(W, H))
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.set_xlim(0, W)
-    ax.set_ylim(0, H)
+    for d in deps:
+        (x1, y1), (x2, y2) = pos[d.first], pos[d.second]
+        rad = 0.25 if abs(y1 - y2) > 2.3 else 0.0     # panah lompat level dilengkungkan
+        col = COLORS[d.kind]
+        ax.annotate("", xy=(x2, y2 + 0.4), xytext=(x1, y1 - 0.4), zorder=1,
+                    arrowprops=dict(arrowstyle="-|>", color=col, lw=1.5,
+                                    connectionstyle=f"arc3,rad={rad}"))
+        ax.text((x1 + x2) / 2, (y1 + y2) / 2, f"{d.kind} ({d.register})",
+                color=col, fontsize=8, ha="center", va="center", zorder=2,
+                bbox=dict(fc="white", ec="none", pad=0.5))
+
+    for y in range(len(levels)):
+        ax.text(min(xs) - 3.6, -y * 2.2, f"Cycle {y + 1}", fontsize=9,
+                color="gray", ha="left", va="center")
+
+    ax.set_xlim(min(xs) - 4.5, max(xs) + 2.5)
+    ax.set_ylim(-(len(levels) - 1) * 2.2 - 1.2, 1.2)
+    ax.set_title(title, fontsize=12)
     ax.axis("off")
-
-    def X(c):
-        return LABEL_W + COLW * (c - 0.5)
-
-    def Y(i):
-        return H - TOP - ROWH * (i + 0.5)
-
-    y_top, y_bot = H - TOP + 0.25, BOTTOM - 0.25
-    for c in range(1, cols + 1):
-        if c % 2 == 1:
-            ax.add_patch(Rectangle((LABEL_W + COLW * (c - 1), y_bot), COLW,
-                                   y_top - y_bot, fc="#f1f3f6", ec="none", zorder=0))
-        ax.text(X(c), H - TOP + 0.45, f"Cycle {c}", ha="center", va="center",
-                fontsize=12, fontweight="bold", color="#333")
-
-    for i, ins in enumerate(instructions):
-        ax.plot([0.1, W0 - 0.1], [Y(i) - ROWH / 2] * 2, color="#e3e3e3", lw=0.8, zorder=0)
-        ax.text(0.2, Y(i), f"{ins.name}:  {ins}", ha="left", va="center",
-                fontsize=12, fontweight="bold", family="monospace", color="#111")
-
-    has_pred = {e[1] for e in edges}
-    box = {}
-    for i, ins in enumerate(instructions):
-        x, y = X(level[i]), Y(i)
-        p = FancyBboxPatch((x - BW / 2, y - BH / 2), BW, BH,
-                           boxstyle="round,pad=0.02,rounding_size=0.12",
-                           fc=NODE_DEP if i in has_pred else NODE_INDEP,
-                           ec="#222", lw=1.8, zorder=5)
-        ax.add_patch(p)
-        ax.text(x, y, ins.name, ha="center", va="center", fontsize=13,
-                fontweight="bold", zorder=6)
-        box[i] = p
-
-    def curve_pts(p0, p2, rad, m=40):
-        (x1, y1), (x2, y2) = p0, p2
-        cx = (x1 + x2) / 2 + rad * (y2 - y1)
-        cy = (y1 + y2) / 2 - rad * (x2 - x1)
-        pts = []
-        for j in range(m + 1):
-            t = j / m
-            pts.append(((1 - t) ** 2 * x1 + 2 * (1 - t) * t * cx + t * t * x2,
-                        (1 - t) ** 2 * y1 + 2 * (1 - t) * t * cy + t * t * y2))
-        return pts
-
-    def hits(pts, skip, margin=0.10):
-        n_hit = 0
-        for j, (px, py) in enumerate(pts):
-            for i2 in range(n):
-                if i2 in skip:
-                    continue
-                bx, by = X(level[i2]), Y(i2)
-                if abs(px - bx) < BW / 2 + margin and abs(py - by) < BH / 2 + margin:
-                    n_hit += 1
-                    break
-        return n_hit
-
-    taken_labels = []
-    drawn_pts = []
-    seen = {}
-    order = sorted(range(len(edges)),
-                   key=lambda t: (level[edges[t][1]] - level[edges[t][0]],
-                                  edges[t][1] - edges[t][0]))
-
-    off_out, off_in, off_in_x = {}, {}, {}
-    for node in range(n):
-        outs = sorted([t for t, e in enumerate(edges) if e[0] == node],
-                      key=lambda t: -edges[t][1])
-        ins_ = sorted([t for t, e in enumerate(edges) if e[1] == node],
-                      key=lambda t: -edges[t][0])
-        for lst, dct in ((outs, off_out), (ins_, off_in)):
-            # jarak antar titik dibatasi supaya semua titik tetap di dalam kotak
-            step = min(0.26, (BH - 0.14) / max(len(lst) - 1, 1))
-            for pos_i, t in enumerate(lst):
-                dct[t] = (pos_i - (len(lst) - 1) / 2) * step
-        ins_x = sorted([t for t, e in enumerate(edges) if e[1] == node],
-                       key=lambda t: (level[edges[t][0]], edges[t][0]))
-        step_x = min(0.40, (BW - 0.16) / max(len(ins_x) - 1, 1))
-        for pos_i, t in enumerate(ins_x):
-            off_in_x[t] = (pos_i - (len(ins_x) - 1) / 2) * step_x
-
-    def inside(px, py, i):
-        return (abs(px - X(level[i])) <= BW / 2 + 0.03
-                and abs(py - Y(i)) <= BH / 2 + 0.03)
-
-    for t in order:
-        src, dst, reg, kind = edges[t]
-        k = seen.get((src, dst), 0)
-        seen[(src, dst)] = k + 1
-        p0 = (X(level[src]), Y(src) + off_out[t])
-        p2 = (X(level[dst]) + off_in_x[t], Y(dst) + off_in[t])
-        pref = 1 if kind == "RAW" else -1
-        cands = [0.0]
-        for r in (0.12, 0.18, 0.25, 0.32, 0.39, 0.46, 0.54, 0.62, 0.71, 0.80, 0.95, 1.20, 1.50):
-            cands += [pref * r, -pref * r]
-        best = None
-        for rad in cands:
-            pts = curve_pts(p0, p2, rad)
-            mid = pts[len(pts) // 2]
-            lab = sum(1 for (lx, ly) in taken_labels
-                      if abs(lx - mid[0]) < 0.45 and abs(ly - mid[1]) < 0.28)
-            lab += sum(1 for i2 in range(n) if i2 not in (src, dst)
-                       and abs(mid[0] - X(level[i2])) < BW / 2 + 0.25
-                       and abs(mid[1] - Y(i2)) < BH / 2 + 0.2)
-            mid_pts = pts[8:-8]
-            close = sum(1 for (px, py) in mid_pts
-                        if any(abs(px - qx) < 0.16 and abs(py - qy) < 0.16
-                               for (qx, qy) in drawn_pts))
-            # lengkungan harus tetap di area gambar: tidak menimpa judul, tulisan
-            # "Cycle N", legenda, maupun teks instruksi di kolom kiri
-            outside = sum(1 for (px, py) in pts
-                          if px < LABEL_W - 0.45 or px > W - 0.3
-                          or py < y_bot + 0.05 or py > y_top - 0.05)
-            near = hits(pts, {src, dst}, margin=0.24)       # jangan terlalu dekat kotak lain
-            score = hits(pts, {src, dst}) * 100 + near * 25 + lab * 30 + close * 6 \
-                + abs(rad) * 5 \
-                + (0 if rad * pref >= 0 else 2) + (40 * k if abs(rad) < 0.1 * (k + 1) else 0) \
-                + outside * 200
-            if best is None or score < best[0]:
-                best = (score, rad, mid)
-        _, rad, mid = best
-        taken_labels.append(mid)
-        drawn_pts.extend(curve_pts(p0, p2, rad)[8:-8])
-        st = EDGE_STYLE[kind]
-
-        pts = curve_pts(p0, p2, rad, m=1500)
-        i0 = 0
-        while i0 < len(pts) - 1 and inside(pts[i0][0], pts[i0][1], src):
-            i0 += 1
-        i1 = len(pts) - 1
-        while i1 > i0 and inside(pts[i1][0], pts[i1][1], dst):
-            i1 -= 1
-        seg = pts[i0:i1 + 1]
-        tip = seg[-1]
-        h = len(seg) - 1
-        while h > 0 and ((seg[h][0] - tip[0]) ** 2 + (seg[h][1] - tip[1]) ** 2) ** 0.5 < 0.15:
-            h -= 1
-
-        ax.plot([q[0] for q in seg[:h + 1]], [q[1] for q in seg[:h + 1]],
-                color=st["color"], linestyle=st["style"], linewidth=2.2,
-                solid_capstyle="butt", dash_capstyle="butt", zorder=3)
-        ax.add_patch(FancyArrowPatch(
-            seg[h], tip, arrowstyle="-|>", mutation_scale=22,
-            color=st["color"], linestyle="-", linewidth=2.2,
-            shrinkA=0, shrinkB=0, zorder=4))
-
-        ax.text(mid[0], mid[1], reg, ha="center", va="center", fontsize=11,
-                fontweight="bold", color=st["color"], zorder=7,
-                bbox=dict(fc="white", ec=st["color"], lw=0.8, pad=1.5,
-                          boxstyle="round,pad=0.15"))
-
-    notes = []
-    out_nodes = {e[0] for e in edges}
-    only_raw = {e[3] for e in edges} == {"RAW"}   # catatan ini hanya relevan untuk RAW
-    for i, ins in enumerate(instructions):
-        if i in out_nodes or not only_raw:
-            continue
-        for j in range(i + 1, n):
-            if ins.destination in instructions[j].sources:
-                break
-            if instructions[j].destination == ins.destination:
-                notes.append(f"{ins.name} tidak punya panah keluar: {ins.destination} "
-                             f"ditimpa {instructions[j].name} sebelum dibaca instruksi mana pun.")
-                break
-    for q, txt in enumerate(notes):
-        ax.text(0.2, BOTTOM - 0.55 - 0.28 * q, "Catatan: " + txt, ha="left",
-                va="center", fontsize=10, style="italic", color="#444")
-
-    ax.text(W0 / 2, H - 0.35, f"{title}  ({cols} cycle)", ha="center", va="center",
-            fontsize=15, fontweight="bold")
-    handles = [Line2D([0], [0], color=EDGE_STYLE[k]["color"],
-                      linestyle=EDGE_STYLE[k]["style"], lw=2.5, label=k)
-               for k in sorted({e[3] for e in edges})]
-    handles += [Rectangle((0, 0), 1, 1, fc=NODE_INDEP, ec="#222", label="Independen"),
-                Rectangle((0, 0), 1, 1, fc=NODE_DEP, ec="#222", label="Dependen")]
-    ax.legend(handles=handles, loc="lower center", ncol=len(handles), fontsize=11,
-              frameon=False, bbox_to_anchor=(W0 / 2 / W, 0.0))
-
-    fig.savefig(filename, dpi=150, bbox_inches="tight", pad_inches=0.25,
-                facecolor="white")
+    fig.savefig(filename, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    return level
+    print(f"Dependency graph (PNG) disimpan: {filename}")
+
+
+def export_dot(instructions, deps, filename):
+    lines = ["digraph G {", "  rankdir=TB;", "  node [shape=box, style=rounded];"]
+    for i in instructions:
+        lines.append(f'  {i.name} [label="{i.name}\\n{i.text()}"];')
+    for d in deps:
+        c = COLORS[d.kind]
+        lines.append(f'  {d.first} -> {d.second} [label="{d.kind} ({d.register})", '
+                     f'color={c}, fontcolor={c}];')
+    lines.append("}")
+    with open(filename, "w") as f:
+        f.write("\n".join(lines))
+    print(f"Dependency graph (DOT) disimpan: {filename} (buka di https://edotor.net)")
+
+
+# -------------------------------------------------
+# Analisis lengkap satu jenis hazard
+# -------------------------------------------------
+def run_analysis(kind, instructions, graph_dir="graphs"):
+    os.makedirs(graph_dir, exist_ok=True)
+    n = len(instructions)
+
+    print("\n" + "*" * 62)
+    print(f"      SIMULATOR ILP - ANALISIS HAZARD {kind}")
+    print("*" * 62)
+
+    print("\nDaftar instruksi:")
+    for ins in instructions:
+        print(f"  {ins.name}: {ins.text()}")
+
+    # 1. Dependensi
+    deps = find_dependencies(instructions, (kind,))
+    print(f"\nANALISIS DEPENDENSI ({kind})")
+    for d in deps:
+        print(f"  {d.second} {d.kind}-depends on {d.first}  (register {d.register})")
+    print(f"  Jumlah dependensi {kind}: {len(deps)}")
+
+    others = {k: len(find_dependencies(instructions, (k,)))
+              for k in KINDS if k != kind}
+    print(f"  Hazard jenis lain pada program ini: {others}")
+
+    # 2. Penjadwalan
+    ideal = print_schedule("ILP IDEAL (tanpa hazard)", schedule(instructions, []))
+    haz_cycles = schedule(instructions, deps)
+    haz = print_schedule(f"ILP DENGAN HAZARD {kind}", haz_cycles)
+    critical = len(schedule(instructions, deps, width=n))
+
+    # 3. Perbandingan kinerja
+    speedup = n / haz
+    print("\n" + "=" * 58)
+    print("PERFORMANCE COMPARISON")
+    print("=" * 58)
+    print(f"Sequential cycles                 : {n}")
+    print(f"ILP ideal (tanpa hazard)          : {ideal}")
+    print(f"ILP dengan hazard {kind}            : {haz}")
+    print(f"Penalti akibat hazard             : {haz - ideal} cycle")
+    print(f"Critical path                     : {critical} instruksi")
+    print(f"Speedup vs sekuensial             : {speedup:.2f}x")
+    print(f"Speedup ideal                     : {n / ideal:.2f}x")
+    print(f"ILP Efficiency (rumus Pak Agung)  : {speedup / n * 100:.2f}%")
+    print(f"Efisiensi terhadap ideal          : {ideal / haz * 100:.2f}%")
+
+    # 4. Graph
+    draw_graph(instructions, deps, f"{graph_dir}/{kind.lower()}_graph.png",
+               f"Dependency Graph {kind}")
+    export_dot(instructions, deps, f"{graph_dir}/{kind.lower()}_graph.dot")
+
+    # 5. Register renaming
+    renamed = rename(instructions)
+    print("\nSETELAH REGISTER RENAMING")
+    for ins in renamed:
+        print(f"  {ins.name}: {ins.text()}")
+    left = {k: len(find_dependencies(renamed, (k,))) for k in KINDS}
+    print(f"  Sisa dependensi: {left}")
+    after = print_schedule("ILP SETELAH RENAMING",
+                           schedule(renamed, find_dependencies(renamed)))
+
+    return {"kind": kind, "n": n, "deps": len(deps), "critical": critical,
+            "ideal": ideal, "hazard": haz, "renamed": after,
+            "speedup": speedup, "efficiency": speedup / n * 100}
