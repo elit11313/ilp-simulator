@@ -1,3 +1,1 @@
-matplotlib
-reportlab
-pillow
+matplotlib>=3.5
