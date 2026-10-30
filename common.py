@@ -1,18 +1,21 @@
 """
 Inti simulator ILP: model instruksi, penjadwalan per cycle, register renaming,
-dependency graph, dan analisis lengkap satu jenis hazard.
+dependency graph (Graphviz), dan analisis lengkap satu jenis hazard.
 Dikembangkan dari simulator ILP Pak Mulya Agung (RAW saja -> RAW/WAR/WAW).
 """
 
 import os
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass
 
 from hazards import find_dependencies
 
 ISSUE_WIDTH = 4
 KINDS = ("RAW", "WAR", "WAW")
-COLORS = {"RAW": "red", "WAR": "blue", "WAW": "green"}
+COLORS = {"RAW": "red3", "WAR": "blue3", "WAW": "darkgreen"}   # Graphviz
+MPL_COLORS = {"RAW": "red", "WAR": "blue", "WAW": "green"}     # matplotlib
 
 
 @dataclass
@@ -26,6 +29,7 @@ class Instruction:
         return f"{self.destination} = {f' {self.op} '.join(self.sources)}"
 
 
+# ---------------------------------------------------------------- penjadwalan
 def schedule(instructions, deps, width=ISSUE_WIDTH):
     """Instruksi jalan jika semua yang ditunggu selesai di cycle sebelumnya."""
     preds = {ins.name: set() for ins in instructions}
@@ -53,6 +57,7 @@ def print_schedule(title, cycles):
     return len(cycles)
 
 
+# ----------------------------------------------------------- register renaming
 def rename(instructions):
     """Register renaming (slide 6: F0 -> F8, F4 -> F9)."""
     numbers = [int(m.group(1))
@@ -71,7 +76,52 @@ def rename(instructions):
     return out
 
 
-def draw_graph(instructions, deps, filename, title):
+# ------------------------------------------------------------ dependency graph
+def draw_graph_graphviz(instructions, deps, filename_png, title):
+    """Graph utama. Satu baris = satu cycle jadwal ILP (sama dengan tabel).
+    File .dot juga disimpan. Butuh program 'dot' (Graphviz)."""
+    cycles = schedule(instructions, deps)
+
+    L = ["digraph G {",
+         f'  label="{title}"; labelloc=t; fontsize=20; fontname="Helvetica-Bold";',
+         "  rankdir=TB; nodesep=0.7; ranksep=0.9; splines=true; newrank=true;",
+         '  node [shape=box, style="rounded,filled", fillcolor="#f5f5f5", '
+         'fontname="Helvetica", fontsize=12];',
+         '  edge [fontname="Helvetica", fontsize=10, penwidth=1.6];']
+
+    for n in range(1, len(cycles) + 1):
+        L.append(f'  C{n} [label="Cycle {n}", shape=plaintext, style="", '
+                 f'fontcolor=gray40];')
+    for n in range(1, len(cycles)):
+        L.append(f"  C{n} -> C{n + 1} [style=invis];")
+
+    for n, group in enumerate(cycles, 1):
+        for ins in group:
+            L.append(f'  {ins.name} [label="{ins.name}\\n{ins.text()}"];')
+        L.append("  {rank=same; C%d; %s}" % (n, "; ".join(i.name for i in group)))
+
+    for d in deps:
+        c = COLORS[d.kind]
+        L.append(f'  {d.first} -> {d.second} '
+                 f'[label=" {d.kind} ({d.register}) ", color={c}, fontcolor={c}];')
+    L.append("}")
+
+    dot_file = os.path.splitext(filename_png)[0] + ".dot"
+    with open(dot_file, "w") as f:
+        f.write("\n".join(L))
+    print(f"Dependency graph (DOT) disimpan: {dot_file}")
+
+    if shutil.which("dot") is None:
+        return False
+    subprocess.run(["dot", "-Tpng", "-Gdpi=130", dot_file, "-o", filename_png],
+                   check=True)
+    print(f"Dependency graph (PNG) disimpan: {filename_png}")
+    return True
+
+
+def draw_graph_matplotlib(instructions, deps, filename, title):
+    """Cadangan jika Graphviz tidak ada. Baris = LEVEL (urutan dependensi),
+    bukan cycle jadwal."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -89,51 +139,41 @@ def draw_graph(instructions, deps, filename, title):
     xs = [p[0] for p in pos.values()]
     fig, ax = plt.subplots(figsize=((max(xs) - min(xs) + 8) * 0.62,
                                     (len(levels) * 2.2 + 1.5) * 0.62))
-
     for ins in instructions:
         x, y = pos[ins.name]
         ax.text(x, y, f"{ins.name}\n{ins.text()}", ha="center", va="center",
                 fontsize=9, zorder=3,
                 bbox=dict(boxstyle="round,pad=0.4", fc="#f5f5f5", ec="black"))
-
     for d in deps:
         (x1, y1), (x2, y2) = pos[d.first], pos[d.second]
         rad = 0.25 if abs(y1 - y2) > 2.3 else 0.0
-        col = COLORS[d.kind]
+        col = MPL_COLORS[d.kind]
         ax.annotate("", xy=(x2, y2 + 0.4), xytext=(x1, y1 - 0.4), zorder=1,
                     arrowprops=dict(arrowstyle="-|>", color=col, lw=1.5,
                                     connectionstyle=f"arc3,rad={rad}"))
         ax.text((x1 + x2) / 2, (y1 + y2) / 2, f"{d.kind} ({d.register})",
                 color=col, fontsize=8, ha="center", va="center", zorder=2,
                 bbox=dict(fc="white", ec="none", pad=0.5))
-
     for y in range(len(levels)):
-        ax.text(min(xs) - 3.6, -y * 2.2, f"Cycle {y + 1}", fontsize=9,
+        ax.text(min(xs) - 3.6, -y * 2.2, f"Level {y + 1}", fontsize=9,
                 color="gray", ha="left", va="center")
-
     ax.set_xlim(min(xs) - 4.5, max(xs) + 2.5)
     ax.set_ylim(-(len(levels) - 1) * 2.2 - 1.2, 1.2)
     ax.set_title(title, fontsize=12)
     ax.axis("off")
     fig.savefig(filename, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"Dependency graph (PNG) disimpan: {filename}")
+    print(f"Dependency graph (PNG, cadangan matplotlib) disimpan: {filename}")
 
 
-def export_dot(instructions, deps, filename):
-    lines = ["digraph G {", "  rankdir=TB;", "  node [shape=box, style=rounded];"]
-    for i in instructions:
-        lines.append(f'  {i.name} [label="{i.name}\\n{i.text()}"];')
-    for d in deps:
-        c = COLORS[d.kind]
-        lines.append(f'  {d.first} -> {d.second} [label="{d.kind} ({d.register})", '
-                     f'color={c}, fontcolor={c}];')
-    lines.append("}")
-    with open(filename, "w") as f:
-        f.write("\n".join(lines))
-    print(f"Dependency graph (DOT) disimpan: {filename}")
+def draw_graph(instructions, deps, filename_png, title):
+    if not draw_graph_graphviz(instructions, deps, filename_png, title):
+        print("Graphviz tidak ditemukan (apt-get install -y graphviz). "
+              "Memakai gambar cadangan matplotlib.")
+        draw_graph_matplotlib(instructions, deps, filename_png, title)
 
 
+# ----------------------------------------------------------------- analisis
 def run_analysis(kind, instructions, graph_dir="."):
     os.makedirs(graph_dir, exist_ok=True)
     n = len(instructions)
@@ -175,8 +215,6 @@ def run_analysis(kind, instructions, graph_dir="."):
     draw_graph(instructions, deps,
                os.path.join(graph_dir, f"{kind.lower()}_graph.png"),
                f"Dependency Graph {kind}")
-    export_dot(instructions, deps,
-               os.path.join(graph_dir, f"{kind.lower()}_graph.dot"))
 
     renamed = rename(instructions)
     print("\nSETELAH REGISTER RENAMING")
