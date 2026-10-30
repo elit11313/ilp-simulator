@@ -1,13 +1,22 @@
 """
 run_all.py
-Menjalankan semua skrip anggota, mencatat status (OK/GAGAL) dan waktu tiap skrip,
-lalu menampilkan tabel ringkasan perbandingan RAW vs WAR vs WAW.
+Menjalankan skrip tiap anggota (di folder anggota1/2/3), mencatat status
+(OK/GAGAL) dan waktu, lalu menampilkan tabel ringkasan RAW vs WAR vs WAW.
 """
 
 import importlib
+import os
 import sys
 import time
 import traceback
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+
+# Daftarkan folder utama dan folder tiap anggota agar modul bisa di-import
+for folder in ("", "anggota1", "anggota2", "anggota3"):
+    path = os.path.join(ROOT, folder)
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 SCRIPTS = ["anggota1_raw", "anggota2_war", "anggota3_waw"]
 
