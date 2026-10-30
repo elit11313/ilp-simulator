@@ -1,3 +1,9 @@
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))
+
 from common import Instruction, run_analysis
 
 KIND = "WAW"
@@ -15,7 +21,7 @@ INSTRUCTIONS = [
 
 
 def main():
-    return run_analysis(KIND, INSTRUCTIONS)
+    return run_analysis(KIND, INSTRUCTIONS, graph_dir=HERE)
 
 
 if __name__ == "__main__":
