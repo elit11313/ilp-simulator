@@ -1,7 +1,6 @@
 """
-common.py
 Inti simulator ILP: model instruksi, penjadwalan per cycle, register renaming,
-gambar dependency graph, dan analisis lengkap satu jenis hazard.
+dependency graph, dan analisis lengkap satu jenis hazard.
 Dikembangkan dari simulator ILP Pak Mulya Agung (RAW saja -> RAW/WAR/WAW).
 """
 
@@ -11,7 +10,7 @@ from dataclasses import dataclass
 
 from hazards import find_dependencies
 
-ISSUE_WIDTH = 4          # maks. instruksi per cycle (seperti contoh ILP slide 7)
+ISSUE_WIDTH = 4
 KINDS = ("RAW", "WAR", "WAW")
 COLORS = {"RAW": "red", "WAR": "blue", "WAW": "green"}
 
@@ -27,12 +26,8 @@ class Instruction:
         return f"{self.destination} = {f' {self.op} '.join(self.sources)}"
 
 
-# -------------------------------------------------
-# Penjadwalan ILP
-# Instruksi boleh jalan jika semua instruksi yang ia
-# tunggu sudah selesai di cycle SEBELUMNYA.
-# -------------------------------------------------
 def schedule(instructions, deps, width=ISSUE_WIDTH):
+    """Instruksi jalan jika semua yang ditunggu selesai di cycle sebelumnya."""
     preds = {ins.name: set() for ins in instructions}
     for d in deps:
         preds[d.second].add(d.first)
@@ -58,10 +53,8 @@ def print_schedule(title, cycles):
     return len(cycles)
 
 
-# -------------------------------------------------
-# Register renaming (slide 6: F0 -> F8, F4 -> F9)
-# -------------------------------------------------
 def rename(instructions):
+    """Register renaming (slide 6: F0 -> F8, F4 -> F9)."""
     numbers = [int(m.group(1))
                for ins in instructions
                for r in [ins.destination] + list(ins.sources)
@@ -78,16 +71,13 @@ def rename(instructions):
     return out
 
 
-# -------------------------------------------------
-# Dependency graph (PNG lewat matplotlib + file DOT)
-# -------------------------------------------------
 def draw_graph(instructions, deps, filename, title):
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
-        print("matplotlib belum terpasang: jalankan 'pip install -r requirements.txt'")
+        print("matplotlib belum terpasang: pip install -r requirements.txt")
         return
 
     levels = schedule(instructions, deps, width=len(instructions))
@@ -97,9 +87,8 @@ def draw_graph(instructions, deps, filename, title):
             pos[ins.name] = ((k - (len(group) - 1) / 2) * 2.8, -y * 2.2)
 
     xs = [p[0] for p in pos.values()]
-    fig_w = (max(xs) - min(xs) + 8) * 0.62
-    fig_h = (len(levels) * 2.2 + 1.5) * 0.62
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    fig, ax = plt.subplots(figsize=((max(xs) - min(xs) + 8) * 0.62,
+                                    (len(levels) * 2.2 + 1.5) * 0.62))
 
     for ins in instructions:
         x, y = pos[ins.name]
@@ -109,7 +98,7 @@ def draw_graph(instructions, deps, filename, title):
 
     for d in deps:
         (x1, y1), (x2, y2) = pos[d.first], pos[d.second]
-        rad = 0.25 if abs(y1 - y2) > 2.3 else 0.0     # panah lompat level dilengkungkan
+        rad = 0.25 if abs(y1 - y2) > 2.3 else 0.0
         col = COLORS[d.kind]
         ax.annotate("", xy=(x2, y2 + 0.4), xytext=(x1, y1 - 0.4), zorder=1,
                     arrowprops=dict(arrowstyle="-|>", color=col, lw=1.5,
@@ -142,13 +131,10 @@ def export_dot(instructions, deps, filename):
     lines.append("}")
     with open(filename, "w") as f:
         f.write("\n".join(lines))
-    print(f"Dependency graph (DOT) disimpan: {filename} (buka di https://edotor.net)")
+    print(f"Dependency graph (DOT) disimpan: {filename}")
 
 
-# -------------------------------------------------
-# Analisis lengkap satu jenis hazard
-# -------------------------------------------------
-def run_analysis(kind, instructions, graph_dir="graphs"):
+def run_analysis(kind, instructions, graph_dir="."):
     os.makedirs(graph_dir, exist_ok=True)
     n = len(instructions)
 
@@ -160,24 +146,18 @@ def run_analysis(kind, instructions, graph_dir="graphs"):
     for ins in instructions:
         print(f"  {ins.name}: {ins.text()}")
 
-    # 1. Dependensi
     deps = find_dependencies(instructions, (kind,))
     print(f"\nANALISIS DEPENDENSI ({kind})")
     for d in deps:
         print(f"  {d.second} {d.kind}-depends on {d.first}  (register {d.register})")
     print(f"  Jumlah dependensi {kind}: {len(deps)}")
-
-    others = {k: len(find_dependencies(instructions, (k,)))
-              for k in KINDS if k != kind}
+    others = {k: len(find_dependencies(instructions, (k,))) for k in KINDS if k != kind}
     print(f"  Hazard jenis lain pada program ini: {others}")
 
-    # 2. Penjadwalan
     ideal = print_schedule("ILP IDEAL (tanpa hazard)", schedule(instructions, []))
-    haz_cycles = schedule(instructions, deps)
-    haz = print_schedule(f"ILP DENGAN HAZARD {kind}", haz_cycles)
+    haz = print_schedule(f"ILP DENGAN HAZARD {kind}", schedule(instructions, deps))
     critical = len(schedule(instructions, deps, width=n))
 
-    # 3. Perbandingan kinerja
     speedup = n / haz
     print("\n" + "=" * 58)
     print("PERFORMANCE COMPARISON")
@@ -192,12 +172,12 @@ def run_analysis(kind, instructions, graph_dir="graphs"):
     print(f"ILP Efficiency (rumus Pak Agung)  : {speedup / n * 100:.2f}%")
     print(f"Efisiensi terhadap ideal          : {ideal / haz * 100:.2f}%")
 
-    # 4. Graph
-    draw_graph(instructions, deps, f"{graph_dir}/{kind.lower()}_graph.png",
+    draw_graph(instructions, deps,
+               os.path.join(graph_dir, f"{kind.lower()}_graph.png"),
                f"Dependency Graph {kind}")
-    export_dot(instructions, deps, f"{graph_dir}/{kind.lower()}_graph.dot")
+    export_dot(instructions, deps,
+               os.path.join(graph_dir, f"{kind.lower()}_graph.dot"))
 
-    # 5. Register renaming
     renamed = rename(instructions)
     print("\nSETELAH REGISTER RENAMING")
     for ins in renamed:
